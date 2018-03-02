@@ -28,6 +28,7 @@ import resolve from './resolve';
 
 export default {
     _cacheWpys: {},
+    _nativeComponents: {},
     createParser (opath) {
         return new DOMParser({errorHandler: {
             warning (x) {
@@ -270,10 +271,48 @@ export default {
             try {
                 if (components) {
                     rst.template.components = {};
+                    if (!rst.config)
+                        rst.config = {};
+                    rst.config.usingComponents = {};
                     let comObj = new Function(`${vars}\r\nreturn ${components}`)();
+                    let commentLine = {};
+                    let updatedComponents = components;
                     for (let k in comObj) {
-                        rst.template.components[k] = comObj[k].lib;
+                        let comName = k;
+                        let comNative = false;
+                        if (k[0] === '@') {
+                            rst.template.hasNative = true;
+                            comName = k.substring(1, k.length);
+                            comNative = true;
+                            rst.config.usingComponents[comName] = util.resolveComPath(rst.template.src, comObj[k].lib);
+                            let realpath = path.resolve(path.dirname(rst.template.src), rst.config.usingComponents[comName]);
+                            this._nativeComponents[realpath] = true;
+
+                            if (!commentLine[coms[comObj[k].name].code]) {
+                                commentLine[coms[comObj[k].name].code] = true;
+                                rst.script.code = rst.script.code.replace(coms[comObj[k].name].code, '/* ' + coms[comObj[k].name].code + ' */');
+                            }
+                            let reg = new RegExp(':[\\s\\r\\t\\n]*' + comObj[k].name, 'g');
+                            updatedComponents = updatedComponents.replace(reg, `: '${rst.config.usingComponents[comName]}'`)
+
+                            if (!util.isFile(realpath + opath.ext)) {
+                                delete this._nativeComponents[realpath];
+                                realpath = util.findComponent(comObj[k].lib);
+                                this._nativeComponents[realpath.substring(0, realpath.indexOf('.'))] = true;
+                                // npm components
+                                let opath = path.parse(realpath);
+                                opath.npm = util.resolveCom(comObj[k].lib);
+                                setTimeout(() => {
+                                    this.compile(opath);
+                                });
+                            }
+                        }
+                        rst.template.components[comName] = {
+                            path: comObj[k].lib,
+                            native: comNative
+                        }
                     }
+                    rst.script.code = rst.script.code.replace(components, updatedComponents);
                 } else {
                     rst.template.components = {};
                 }
@@ -281,6 +320,8 @@ export default {
                 util.output('错误', path.join(opath.dir, opath.base));
                 util.error(`解析components出错，报错信息：${e}\r\n${vars}\r\nreturn ${components}`);
             }
+
+
 
             let wxsMatch = rst.script.code.match(/[\s\r\n]wxs\s*=[\s\r\n]*/);
             wxsMatch = wxsMatch ? wxsMatch[0] : undefined;
@@ -466,11 +507,9 @@ export default {
         } else if (pages.indexOf(relative) > -1) {
             type = 'page';
             util.log('页面: ' + relative, '编译');
-        } else if (relative.indexOf(path.sep + 'components' + path.sep) > -1){
+        } else {
             type = 'component';
             util.log('组件: ' + relative, '编译');
-        } else {
-            util.log('Other: ' + relative, '编译');
         }
 
         // Ignore all node modules, avoid eslint warning.
@@ -503,6 +542,11 @@ export default {
             // 无template
             delete wpy.template;
 
+        } else if (this._nativeComponents[path.join(opath.dir, opath.name)]) {
+            type = 'nativeComponent';
+            wpy.config = wpy.config || {};
+            wpy.config.component = true;
+
         } else if (type === 'component') {
             delete wpy.config;
         }
@@ -518,11 +562,11 @@ export default {
             let k, tmp;
             if (wpy.template) {
                 for (k in wpy.template.components) {
-                    tmp = wpy.template.components[k];
+                    tmp = wpy.template.components[k].path;
                     if (tmp.indexOf('.') === -1) {
                         requires.push(tmp); // 第三方组件
                     } else {
-                        requires.push(path.join(opath.dir, wpy.template.components[k]));
+                        requires.push(path.join(opath.dir, wpy.template.components[k].path));
                     }
 
                     // 去重

@@ -19,14 +19,16 @@ let $bindEvt = (config, com, prefix) => {
     com.$prefix = util.camelize(prefix || '');
     Object.getOwnPropertyNames(com.components || {}).forEach((name) => {
         let cClass = com.components[name];
-        let child = new cClass();
-        child.$initMixins();
-        child.$name = name;
-        let comPrefix = prefix ? (prefix + child.$name + '$') : ('$' + child.$name + '$');
+        if (typeof cClass !== 'string') {
+            let child = new cClass();
+            child.$initMixins();
+            child.$name = name;
+            let comPrefix = prefix ? (prefix + child.$name + '$') : ('$' + child.$name + '$');
 
-        com.$com[name] = child;
+            com.$com[name] = child;
 
-        $bindEvt(config, child, comPrefix);
+            $bindEvt(config, child, comPrefix);
+        }
     });
     Object.getOwnPropertyNames(com.constructor.prototype || []).forEach((prop) => {
         if(prop !== 'constructor' && PAGE_EVENT.indexOf(prop) === -1) {
@@ -222,4 +224,99 @@ export default {
 
         return $bindEvt(config, page, '');
     },
+    $createComponent (comClass, pagePath) {
+        let config = {};
+        let com = new comClass;
+        config.properties = {};
+        config.methods = {};
+        config.options = { multipleSlots: true };
+
+        if (com.properties) {
+            config.properties = com.properties;
+        } else {
+            for (let k in com.props) {
+                config.properties[k] = {};
+                if (com.props[k].type) {
+                    config.properties[k].type = com.props[k].type;
+                } else {
+                    config.properties[k].type = Object;
+                }
+
+                config.properties[k].value = com.props[k].default;
+            }
+        }
+
+        for (let k in config.properties) {
+            let fnBak = config.properties[k].observer;
+            config.properties[k].observer = function(newVal, oldVal){
+                this.$com.$data[k] = newVal;
+                this.$com[k] = util.$copy(newVal, true);
+                typeof fnBak === 'function' && fnBak.call(this.$com, newVal, oldVal);
+            };
+        }
+
+        config.data = com.data;
+
+        let allMethods = Object.getOwnPropertyNames(com.methods || []);
+
+        allMethods.forEach((method, i) => {
+            config.methods[method] = function (e, ...args) {
+                let evt = new event('system', this, e.type);
+                evt.$transfor(e);
+                let wepyParams = [], paramsLength = 0, tmp, p;
+                if (e.currentTarget && e.currentTarget.dataset) {
+                    tmp = e.currentTarget.dataset;
+                    while(tmp['wpy' + method.toLowerCase() + (p = String.fromCharCode(65 + paramsLength++))] !== undefined) {
+                        wepyParams.push(tmp['wpy' + method.toLowerCase() + p]);
+                    }
+                    if (tmp.comIndex !== undefined) {
+                        comIndex = tmp.comIndex;
+                    }
+                }
+
+                args = args.concat(wepyParams);
+                let rst, mixRst;
+                let comfn = this.$com.methods[method];
+                if (comfn) {
+                    rst = comfn.apply(this.$com, args.concat(evt));
+                }
+                this.$com.$mixins.forEach((mix) => {
+                    mix.methods[method] && (mixRst = mix.methods[method].apply(this.$com, args.concat(evt)));
+                });
+                this.$com.$apply();
+                return comfn ? rst : mixRst;
+            }
+        });
+
+        config.created = function () {
+            this.$com = new comClass
+            this.$com.$native = true;
+            this.$com.$data = {};
+            this.$com.$wxpage = this;
+            this.$com.$root = this.$com;
+            for (let k in this.data) {
+                this.$com.$data[k] = this.data[k];
+                //com.$data[k] = util.$copy(this.data[k], true);
+                this.$com[k] = util.$copy(this.data[k], true);
+            }
+            for (let k in this.properties) {
+                this.$com.$data[k] = this.properties[k];
+                //com.$data[k] = util.$copy(this.data[k], true);
+                this.$com[k] = util.$copy(this.data[k], true);
+            }
+
+            typeof this.$com.created === 'function' && this.$com.created.call(this.$com);
+        }
+
+        config.ready = function () {
+            let wxpage = getCurrentPages();
+            wxpage = wxpage.length ? wxpage[0] : null;
+
+            if (wxpage) {
+                this.$com.$parent = wxpage.$com;
+            }
+            typeof this.$com.ready === 'function' && this.$com.ready.call(this.$com);
+        }
+        return config;
+    }
 }

@@ -759,6 +759,110 @@ WePY编译组件的过程如下：
   <img src="https://cloud.githubusercontent.com/assets/2182004/22774767/8f090dd6-eee3-11e6-942b-1591a6379ad3.png">
 </p>
 
+WePY 在2015.11月的版本中加入组件功能，实现原理是静态编译注入。小程序在2016.11月的版本中加入了组件功能。在`1.7.2`的版本中，WePY 支持使用原生组件功能进行开发。
+
+`1.7.2` 版本之前的组件引用方式：
+
+```
+// index.wpy
+
+<template>
+    <view class="parent">
+        This is parent
+        <child></child>
+    </view>
+</template>
+
+<script>
+    import wepy from 'wepy';
+    //引入组件文件
+    import Child from '../components/child';
+   
+    export default class Index extends wepy.component {
+        //声明组件，分配组件id为child
+        components = {
+            'child': Child
+        };
+    }
+</script>
+
+// child.wpy
+
+<template>
+    <view class="child">This is child</view>
+</template>
+```
+
+编译后的结果：
+
+```
+// index.wxml
+<view class="parent">
+    This is parent
+    <view class="child">This is child</view>
+</view>
+
+// 只存在child.js 和 child.wxss, 不会生成 child.wxml, child.json
+```
+
+`1.7.2` 版本以后，在`components`引用时加入`@`符号，即可标识组件为小程序原生组件，引用方式如下：
+
+```
+// index.wpy
+
+<template>
+    <view class="parent">
+        This is parent
+        <child></child>
+    </view>
+</template>
+
+<script>
+    import wepy from 'wepy';
+    //引入组件文件
+    import Child from '../components/child';
+   
+    export default class Index extends wepy.component {
+        //声明组件，分配组件id为child
+        components = {
+            '@child': Child
+        };
+    }
+</script>
+
+// child.wpy
+
+<template>
+    <view class="child">This is child</view>
+</template>
+```
+
+编译后的结果：
+
+```
+// index.wxml
+<view class="parent">
+    This is parent
+    <child></child>
+</view>
+
+// index.json
+{
+    "usingComponents": {
+        "child": './child'
+    }
+}
+
+// child.wxml
+<view class="child">This is child</view>
+
+// child.json
+{
+    "component": true
+}
+```
+
+
 #### 普通组件引用
 
 当页面需要引入组件或组件需要引入子组件时，必须在`.wpy`文件的`<script>`脚本部分先import组件文件，然后在`components`对象中给组件声明唯一的组件ID，接着在`<template>`模板部分中添加以`components`对象中所声明的组件ID进行命名的自定义标签以插入组件。如：

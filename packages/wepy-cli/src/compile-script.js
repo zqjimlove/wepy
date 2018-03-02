@@ -242,7 +242,7 @@ export default {
                 code = compileResult.code;
             }
             if (type !== 'npm') {
-                if (type === 'page' || type === 'app') {
+                if (type === 'page' || type === 'app' || type === 'component' || type === 'nativeComponent') {
                     code = code.replace(/exports\.default\s*=\s*(\w+);/ig, function (m, defaultExport) {
                         if (defaultExport === 'undefined') {
                             return '';
@@ -250,7 +250,10 @@ export default {
                         if (type === 'page') {
                             let pagePath = path.join(path.relative(appPath.dir, opath.dir), opath.name).replace(/\\/ig, '/');
                             return `\nPage(require('wepy').default.$createPage(${defaultExport} , '${pagePath}'));\n`;
-                        } else {
+                        } else if (type === 'nativeComponent') {
+                            let pagePath = path.join(path.relative(appPath.dir, opath.dir), opath.name).replace(/\\/ig, '/');
+                            return `\nComponent(require('wepy').default.$createComponent(${defaultExport} , '${pagePath}'));\n`;
+                        } else if (type === 'app') {
                             appPath = opath;
                             let appConfig = JSON.stringify(config.appConfig || {});
                             let appCode = `\nApp(require('wepy').default.$createApp(${defaultExport}, ${appConfig}));\n`;
@@ -258,6 +261,8 @@ export default {
                                 appCode += 'require(\'./_wepylogs.js\')\n';
                             }
                             return appCode;
+                        } else {
+                            return m;
                         }
                     });
                 }

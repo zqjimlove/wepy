@@ -250,7 +250,29 @@ export default {
                 node.replaceData(0, node.data.length, this.parseExp(node.data, prefix, ignores, mapping));
             }
         } else {
+            if (template.components[node.nodeName] && template.components[node.nodeName].native) {
+                if (!node.hasAttribute('id')) {
+                    node.setAttribute('id', node.nodeName);
+                }
+            }
             [].slice.call(node.attributes || []).forEach((attr) => {
+                if (template.components[node.nodeName] && template.components[node.nodeName].native) {
+                    if (attr.prefix === 'v-on') {
+                        node.setAttribute('bind:' + attr.localName, attr.value);
+                        node.removeAttribute(attr.name);
+                    } else if (attr.prefix === 'v-bind') {
+                        let p = attr.localName.split('.');
+                        let val = attr.value;
+                        if (val.indexOf('{{') === -1) {
+                            val = `{{${val}}}`;
+                        }
+                        node.setAttribute(p[0], val);
+                        node.removeAttribute(attr.name);
+                    }
+                }
+                if (attr.name === 'xmlns:v-on') {
+                    node.removeAttribute(attr.name);
+                }
                 if (attr.name === 'v-bind:class.once') {
                     let classObject = this.parseClassExp(attr.value);
                     let classArray = (node.getAttribute('class') || '').split(' ').map(v => v.replace(/^\s/ig, '').replace(/\s$/ig, ''));
@@ -366,7 +388,13 @@ export default {
 
         let config = cache.getConfig();
         let tagprefix = config.output === 'ant' ? 'a' : 'wx';
-        this.updateSlot(node, childNodes);
+
+        let opath = path.parse(template.src);
+
+        // update slot for non-native component
+        if (!cWpy._nativeComponents[path.join(opath.dir, opath.name)]) {
+            this.updateSlot(node, childNodes);
+        }
 
         this.updateBind(node, template, parentTemplate, prefix, {}, propsMapping);
 
@@ -421,7 +449,8 @@ export default {
                 });
             }
             Object.keys(template.components).forEach((com) => {
-                repeatComs = repeatComs.concat(util.elemToArray(repeat.getElementsByTagName(com)));
+                if (!template.components[com].native)
+                    repeatComs = repeatComs.concat(util.elemToArray(repeat.getElementsByTagName(com)));
             });
             repeatComs.forEach(com => {
                 let comAttributes = {};
@@ -475,9 +504,9 @@ export default {
         let componentElements = util.elemToArray(node.getElementsByTagName('component'));
         let customElements = [];
         Object.keys(template.components).forEach((com) => {
-            customElements = customElements.concat(util.elemToArray(node.getElementsByTagName(com)));
+            if (!template.components[com].native)
+                customElements = customElements.concat(util.elemToArray(node.getElementsByTagName(com)));
         });
-
         componentElements = componentElements.concat(customElements);
 
         componentElements.forEach((com) => {
@@ -495,8 +524,8 @@ export default {
             } else {
                 isCustom = true;
                 comid = util.getComId(com);
-                definePath = template.components[comid];
-                definePath = definePath.indexOf('.') === -1 ? definePath : path.resolve(template.src, '..' + path.sep + template.components[comid])
+                definePath = template.components[comid].path;
+                definePath = definePath.indexOf('.') === -1 ? definePath : path.resolve(template.src, '..' + path.sep + template.components[comid].path)
             }
 
             let src = util.findComponent(definePath, isCustom);

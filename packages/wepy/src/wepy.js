@@ -25,6 +25,7 @@ export default {
 
     $createApp: base.$createApp,
     $createPage: base.$createPage,
+    $createComponent: base.$createComponent,
 
     $isEmpty: util.$isEmpty,
     $isEqual: util.$isEqual,

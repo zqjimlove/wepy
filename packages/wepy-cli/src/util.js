@@ -120,11 +120,49 @@ const utils = {
     getComPath(elem) {
         return elem.getAttribute('path') || this.getComId(elem);
     },
+    resolveComPath(base, com) {
+        if (com[0] === '.') {
+            return com;
+        }
+        let full, relative;
+        let lib = com, main = null;
+        if (com[0] !== '@' && com.indexOf(path.sep) > 0) {
+            let sepIndex = com.indexOf(path.sep);
+            lib = com.substring(0, sepIndex);
+            main = com.substring(sepIndex + 1, com.length);
+        }
+        let o = resolve.getMainFile(lib);
+        if (o) {
+            full = path.join(o.dir, main ? main : o.file);
+            let src = cache.getSrc();
+            let npmpath = path.join(this.currentDir, src, 'npm', path.relative(o.modulePath, full));
+            let fullObj = path.parse(npmpath);
+            relative = path.relative(path.dirname(base), path.join(fullObj.dir, fullObj.name));
+        } else {
+            full = this.findComponent(lib);
+            let fullObj = path.parse(full);
+            relative = path.relative(path.dirname(base), path.join(fullObj.dir, fullObj.name));
+        }
+        return relative;
+    },
+    resolveCom (com) {
+        let wpyExt = cache.getExt();
+
+        let src = '';
+        let lib = com, main = null;
+        if (com[0] !== '@' && com.indexOf(path.sep) > 0) {
+            let sepIndex = com.indexOf(path.sep);
+            lib = com.substring(0, sepIndex);
+            main = com.substring(sepIndex + 1, com.length);
+        }
+        let o = resolve.getMainFile(lib);
+        return o;
+    },
     findComponentInTemplate (com, template) {
         if (typeof(com) !== 'string') {
             com = this.getComId(com);
         }
-        let definePath = template.components[com];
+        let definePath = template.components[com].path;
         definePath = definePath.indexOf('.') === -1 ? definePath : path.resolve(template.src, '..' + path.sep + definePath)
         return this.findComponent(definePath, true);
     },

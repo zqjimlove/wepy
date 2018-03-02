@@ -98,6 +98,7 @@ export default class {
         let self = this;
 
         this.$wxpage = $wxpage;
+        this.$wxpage.$com = this;
         if (this.$isComponent) {
             this.$root = $root || this.$root;
             this.$parent = $parent || this.$parent;
@@ -356,7 +357,16 @@ export default class {
     }
 
     $invoke (com, method, ...args) {
-        com = this.$getComponent(com);
+        let comName = com;
+        com = this.$getComponent(comName);
+
+        // Try native component
+        if (!com) {
+            com = this.$wxpage.selectComponent('#' + comName);
+            if (com && com.$com) {
+                com = com.$com;
+            }
+        }
 
         if (!com) {
             throw new Error('Invalid path: ' + com);
@@ -543,7 +553,7 @@ export default class {
                     readyToSet[this.$prefix + k] = this[k]; 
                     this.data[k] = this[k];
                     originData[k] = util.$copy(this[k], true);
-                    if (this.$repeat && this.$repeat[k]) {
+                    if (this.$repeat && this.$repeat[k] && !this.$native) {
                         let $repeat = this.$repeat[k];
                         this.$com[$repeat.com].data[$repeat.props] = this[k];
                         this.$com[$repeat.com].$setIndex(0);
@@ -558,7 +568,7 @@ export default class {
                                 this.$parent[mapping] = this[k];
                                 this.$parent.data[mapping] = this[k];
                                 this.$parent.$apply();
-                            } else if (changed !== 'parent' && !util.$isEqual(this.$com[changed].$data[mapping], this[k])) {
+                            } else if (changed !== 'parent' && this.$com[changed] && !util.$isEqual(this.$com[changed].$data[mapping], this[k])) {
                                 this.$com[changed][mapping] = this[k];
                                 this.$com[changed].data[mapping] = this[k];
                                 this.$com[changed].$apply();
