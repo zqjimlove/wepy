@@ -379,6 +379,9 @@ export default {
                         key: repeat.getAttribute('key') || 'key',
                     }
                     coms.concat('component').forEach((com) => {
+                        if (com[0] === '@') {
+                            com = com.substring(1, com.length);
+                        }
                         elems = elems.concat(util.elemToArray(repeat.getElementsByTagName(com)));
                     });
 
@@ -428,31 +431,44 @@ export default {
 
             elems = [];
             coms.concat('component').forEach((com) => {
+                if (com[0] === '@') {
+                    com = com.substring(1, com.length);
+                }
                 elems = elems.concat(util.elemToArray(rst.template.node.getElementsByTagName(com)));
             });
-
             elems.forEach((elem) => {
                 // ignore the components calculated in repeat.
                 if (calculatedComs.indexOf(elem) === -1) {
                     let comid = util.getComId(elem);
                     [].slice.call(elem.attributes || []).forEach((attr) => {
-                        if (attr.name !== 'id' && attr.name !== 'path') {
-                            if (/v-on:/.test(attr.name)) { // v-on:fn user custom event
-                                if (!events[comid])
-                                    events[comid] = {};
-                                events[comid][attr.name] = attr.value;
-                            } else {
-                                if (!props[comid])
-                                    props[comid] = {};
-                                if (['hidden', 'wx:if', 'wx:elif', 'wx:else'].indexOf(attr.name) === -1) {
-                                    props[comid][attr.name] = attr.value;
+                        if (rst.template.components[comid].native) {
+                            if (/^bind:?/.test(attr.name)) {
+                                let name = attr.name.replace(/^bind:?/i, '');
+                                let id = elem.getAttribute('id') || comid;
+                                if (!events[id]) {
+                                    events[id] = {};
+                                }
+                                events[id][name] = attr.value;
+                            }
+                        } else {
+                            if (attr.name !== 'id' && attr.name !== 'path') {
+                                if (/v-on:/.test(attr.name)) { // v-on:fn user custom event
+                                    if (!events[comid])
+                                        events[comid] = {};
+                                    events[comid][attr.name] = attr.value;
+                                } else {
+                                    if (!props[comid])
+                                        props[comid] = {};
+                                    if (['hidden', 'wx:if', 'wx:elif', 'wx:else'].indexOf(attr.name) === -1) {
+                                        props[comid][attr.name] = attr.value;
+                                    }
                                 }
                             }
                         }
                     });
                 }
             });
-            if (Object.keys(props).length) {
+            if (Object.keys(props).length || Object.keys(events).length) {
                 rst.script.code = rst.script.code.replace(/[\s\r\n]components\s*=[\s\r\n]*/, (match, item, index) => {
                     return `$repeat = ${JSON.stringify($repeat)};\r\n$props = ${JSON.stringify(props)};\r\n$events = ${JSON.stringify(events)};\r\n${match}`;
                 });

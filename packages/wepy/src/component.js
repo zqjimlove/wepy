@@ -264,7 +264,13 @@ export default class {
 
         // In the same page redirection, $wxpage does not update, so use the page $wxpage
         if (typeof v === 'function') {
+            if (this.$native) {
+                return this.$wxpage.setData(k, v);
+            }
             return this.$root.$wxpage.setData(k, v);
+        }
+        if (this.$native) {
+            return this.$wxpage.setData(k);
         }
         return this.$root.$wxpage.setData(k);
     }
@@ -327,9 +333,17 @@ export default class {
     }
 
     $getComponent(com) {
+        let comName = com;
         if (typeof(com) === 'string') {
             if (com.indexOf('/') === -1) {
-                return this.$com[com];
+                com = this.$com[com];
+                if (!com) {
+                    com = this.$root.$wxpage.selectComponent('#' + comName);
+                    if (com && com.$com) {
+                        com = com.$com;
+                    }
+                }
+                return com;
             } else if (com === '/') {
                 return this.$parent;
             } else {
@@ -349,6 +363,12 @@ export default class {
                         }
                     } else if (s) {
                         com = com.$com[s];
+                        if (!com) {
+                            com = this.$root.$wxpage.selectComponent('#' + s);
+                            if (com && com.$com) {
+                                com = com.$com;
+                            }
+                        }
                     }
                 });
             }
@@ -357,16 +377,7 @@ export default class {
     }
 
     $invoke (com, method, ...args) {
-        let comName = com;
-        com = this.$getComponent(comName);
-
-        // Try native component
-        if (!com) {
-            com = this.$wxpage.selectComponent('#' + comName);
-            if (com && com.$com) {
-                com = com.$com;
-            }
-        }
+        com = this.$getComponent(com);
 
         if (!com) {
             throw new Error('Invalid path: ' + com);
@@ -420,8 +431,13 @@ export default class {
         args = args.concat($evt);
 
         // User custom event;
-        if (this.$parent && this.$parent.$events && this.$parent.$events[this.$name]) {
-            let method = this.$parent.$events[this.$name]['v-on:' + evtName];
+        if (this.$parent && this.$parent.$events) {
+            let method;
+            if (this.$name && this.$parent.$events[this.$name] && this.$parent.$events[this.$name]['v-on:' + evtName]) {
+                method = this.$parent.$events[this.$name]['v-on:' + evtName];
+            } else if (this.$wxpage.id && this.$parent.$events[this.$wxpage.id] && this.$parent.$events[this.$wxpage.id][evtName]) {
+                method = this.$parent.$events[this.$wxpage.id][evtName];
+            }
             if (method && this.$parent.methods) {
                 let fn = this.$parent.methods[method];
                 if (typeof(fn) === 'function') {
@@ -433,6 +449,8 @@ export default class {
                     throw new Error(`Invalid method from emit, component is ${this.$parent.$name}, method is ${method}. Make sure you defined it already.\n`);
                 }
             }
+        } else if (this.$native) {
+            this.$wxpage.triggerEvent.apply(this.$wxpage, [].concat(evtName).concat(args));
         }
         while(com && com.$isComponent !== undefined && $evt.active) {
             // 保存 com 块级作用域组件实例

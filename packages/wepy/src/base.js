@@ -293,7 +293,6 @@ export default {
             this.$com.$native = true;
             this.$com.$data = {};
             this.$com.$wxpage = this;
-            this.$com.$root = this.$com;
             for (let k in this.data) {
                 this.$com.$data[k] = this.data[k];
                 //com.$data[k] = util.$copy(this.data[k], true);
@@ -310,9 +309,10 @@ export default {
 
         config.ready = function () {
             let wxpage = getCurrentPages();
-            wxpage = wxpage.length ? wxpage[0] : null;
+            wxpage = wxpage.length ? wxpage[wxpage.length - 1] : null;
 
             if (wxpage) {
+                this.$com.$root = wxpage.$com;
                 this.$com.$parent = wxpage.$com;
             }
             typeof this.$com.ready === 'function' && this.$com.ready.call(this.$com);
