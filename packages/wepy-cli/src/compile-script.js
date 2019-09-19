@@ -10,12 +10,17 @@
 
 import path from 'path';
 import util from './util';
-import cache from './cache';
+
+import cache,{cacheDir as _cacheDir, defaultCacheKeys} from './cache'
 import cWpy from './compile-wpy';
+import serialize from 'serialize-javascript';
+import crypto from 'crypto'
 
 import loader from './loader';
 
 import resolve from './resolve';
+
+import cacache from 'cacache';
 
 
 const currentPath = util.currentDir;
@@ -28,8 +33,8 @@ export default {
         let config = cache.getConfig();
         let wpyExt = params.wpyExt;
 
-
-        return code.replace(/(^|[^\.\w])require\(['"]([\w\d_\-\.\/@]+)['"]\)/ig, (match, char, lib) => {
+        let deps = [];
+        code = code.replace(/(^|[^\.\w])require\(['"]([\w\d_\-\.\/@]+)['"]\)/ig, (match, char, lib) => {
             let npmInfo = opath.npm;
 
             if (lib === './_wepylogs.js') {
@@ -178,7 +183,7 @@ export default {
                     let newOpath = path.parse(source);
                     newOpath.npm = npmInfo;
                     this.compile('js', null, 'npm', newOpath);
-
+                    deps.push(newOpath);
                 }
             }
             if (type === 'npm') {
@@ -195,6 +200,8 @@ export default {
             resolved = resolved.replace(/\\/g, '/').replace(/^\.\.\//, './');
             return `${char}require('${resolved}')`;
         });
+
+        return [code,deps];
     },
 
     npmHack (opath, code) {
@@ -224,7 +231,7 @@ export default {
         return code;
     },
 
-    compile (lang, code, type, opath) {
+    compile (lang, code, type, opath, opts = {}) {
         let config = util.getConfig();
         src = cache.getSrc();
         dist = cache.getDist();
@@ -239,6 +246,10 @@ export default {
 
         let compiler = loader.loadCompiler(lang);
 
+        if (!compiler) {
+            return;
+        }
+
         // replace wx to swan
         if(config.output === 'baidu') {
             code = code.replace(/\b(wx)\b/g, function(match, p1, offset, s) {
@@ -251,81 +262,142 @@ export default {
             })
         }
 
-        if (!compiler) {
-            return;
+        let target;
+        if (type !== 'npm') {
+            target = util.getDistPath(opath, 'js');
+        } else {
+            code = this.npmHack(opath, code);
+            const base =
+                opath.ext === '.wpy'
+                    ? opath.base.replace(opath.ext, '.js')
+                    : opath.base;
+            target = path.join(
+                npmPath,
+                path.relative(opath.npm.modulePath, path.join(opath.dir, base))
+            );
         }
 
-        compiler(code, config.compilers[lang] || {}).then(compileResult => {
-            let sourceMap;
-            if (typeof(compileResult) === 'string') {
-                code = compileResult;
-            } else {
-                sourceMap = compileResult.map;
-                code = compileResult.code;
+        let {
+            cacheDir = _cacheDir,
+            cacheKeys = {
+                ...defaultCacheKeys,
+                output: config.output,
+                filePath: target
             }
-            if (type !== 'npm') {
-                if (type === 'page' || type === 'app') {
-                    code = code.replace(/exports\.default\s*=\s*(\w+);/ig, function (m, defaultExport) {
-                        if (defaultExport === 'undefined') {
-                            return '';
-                        }
-                        if (type === 'page') {
-                            let pagePath = path.join(path.relative(appPath.dir, opath.dir), opath.name).replace(/\\/ig, '/');
-                            return `\nPage(require('wepy').default.$createPage(${defaultExport} , '${pagePath}'));\n`;
-                        } else {
-                            appPath = opath;
-                            let appConfig = JSON.stringify(config.appConfig || {});
-                            let appCode = `\nApp(require('wepy').default.$createApp(${defaultExport}, ${appConfig}));\n`;
-                            if (config.cliLogs) {
-                                appCode += 'require(\'./_wepylogs.js\')\n';
-                            }
-                            return appCode;
-                        }
-                    });
-                }
-            }
-
-            code = this.resolveDeps(code, type, opath);
-
-            if (!opath.compiled && type === 'npm' && opath.ext === '.wpy') { // 第三方npm组件，后缀恒为wpy
-                opath.compiled = true
-                cWpy.compile(opath);
-                return;
-            }
-
-            let target;
-            if (type !== 'npm') {
-                target = util.getDistPath(opath, 'js');
-            } else {
-                code = this.npmHack(opath, code);
-                const base = opath.ext === '.wpy' ? opath.base.replace(opath.ext, '.js') : opath.base;
-                target = path.join(npmPath, path.relative(opath.npm.modulePath, path.join(opath.dir, base)));
-            }
-
-            if (sourceMap) {
-                sourceMap.sources = [opath.name + '.js'];
-                sourceMap.file = opath.name + '.js';
-                var Base64 = require('js-base64').Base64;
-                code += `\r\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${Base64.encode(JSON.stringify(sourceMap))}`;
-            }
-
-            let plg = new loader.PluginHelper(config.plugins, {
-                type: type,
-                code: code,
-                file: target,
-                output (p) {
-                    util.output(p.action, p.file);
-                },
-                done (result) {
-                    util.output('写入', result.file);
-                    util.writeFile(target, result.code);
-                }
-            });
-            // 缓存文件修改时间戳
-            cache.saveBuildCache();
-        }).catch((e) => {
-            util.error(e);
+        } = opts;
+        
+        let _cacheKey = serialize({
+            ...cacheKeys,
+            filePath: target,
+            hash: crypto
+                .createHash('md4')
+                .update(code)
+                .digest('hex')
         });
+
+        function enqueue() {
+            compiler(code, config.compilers[lang] || {}).then(compileResult => {
+                let sourceMap;
+                if (typeof(compileResult) === 'string') {
+                    code = compileResult;
+                } else {
+                    sourceMap = compileResult.map;
+                    code = compileResult.code;
+                }
+                if (type !== 'npm') {
+                    if (type === 'page' || type === 'app') {
+                        code = code.replace(/exports\.default\s*=\s*(\w+);/ig, function (m, defaultExport) {
+                            if (defaultExport === 'undefined') {
+                                return '';
+                            }
+                            if (type === 'page') {
+                                if(!appPath){
+                                    appPath = cache.getAppOpath();
+                                }
+                                let pagePath = path.join(path.relative(appPath.dir, opath.dir), opath.name).replace(/\\/ig, '/');
+                                return `\nPage(require('wepy').default.$createPage(${defaultExport} , '${pagePath}'));\n`;
+                            } else {
+                                appPath = opath;
+                                let appConfig = JSON.stringify(config.appConfig || {});
+                                let appCode = `\nApp(require('wepy').default.$createApp(${defaultExport}, ${appConfig}));\n`;
+                                if (config.cliLogs) {
+                                    appCode += 'require(\'./_wepylogs.js\')\n';
+                                }
+                                return appCode;
+                            }
+                        });
+                    }
+                }
+                
+                let deps;
+                [code, deps] = this.resolveDeps(code, type, opath);
+
+                if (!opath.compiled && type === 'npm' && opath.ext === '.wpy') { // 第三方npm组件，后缀恒为wpy
+                    opath.compiled = true
+                    cWpy.compile(opath);
+                    return;
+                }
+    
+                
+    
+                if (sourceMap) {
+                    sourceMap.sources = [opath.name + '.js'];
+                    sourceMap.file = opath.name + '.js';
+                    var Base64 = require('js-base64').Base64;
+                    code += `\r\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${Base64.encode(JSON.stringify(sourceMap))}`;
+                }
+    
+                let plg = new loader.PluginHelper(config.plugins, {
+                    type: type,
+                    code: code,
+                    file: target,
+                    output (p) {
+                        util.output(p.action, p.file);
+                    },
+                    done (result) {
+                        // util.output('写入', `${_cacheKey}:${result.file}`);
+                        // util.writeFile(target, result.code);
+                        result.target = target;
+                        result.deps = deps;
+                        if (cacheDir && opts.cache) {
+                            cacache
+                                .put(
+                                    cacheDir,
+                                    _cacheKey,
+                                    JSON.stringify(result)
+                                )
+                                .then(() => {
+                                    wirte(result);
+                                });
+                        } else {
+                            wirte(result);
+                        }
+                    }
+                });
+                // 缓存文件修改时间戳
+                cache.saveBuildCache();
+            }).catch((e) => {
+                util.error(e);
+            });
+        }
+
+        function wirte({ target, code, file }, isCache = false){
+            util.output((isCache?'缓存':'')+'写入', file);
+            util.writeFile(target, code);
+        }
+
+        if (cacheDir && opts.cache) {
+            cacache.get(cacheDir, _cacheKey).then(({ data }) => {
+                let result = JSON.parse(data);
+                let deps = result.deps;
+                deps.forEach(opath=>{
+                    this.compile('js', null, 'npm', opath);
+                })
+                wirte(result, true);
+            }, enqueue.bind(this));
+        } else {
+            enqueue.call(this);
+        }
     }
 
 }

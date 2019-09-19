@@ -455,7 +455,7 @@ export default {
         eslint(filepath);
     },
 
-    compile (opath) {
+    compile (opath, opts) {
         let filepath = path.join(opath.dir, opath.base);
         let src = cache.getSrc();
         let dist = cache.getDist();
@@ -516,7 +516,7 @@ export default {
         }
 
         if (wpy.config) {
-            cConfig.compile(wpy.config, opath);
+            cConfig.compile(wpy.config, opath, opts);
         } else {
             this.remove(opath, 'json');
         }
@@ -543,7 +543,7 @@ export default {
                 }
             }
             try {
-                cStyle.compile(wpy.style, requires, opath, wpy.moduleId);
+                cStyle.compile(wpy.style, requires, opath, wpy.moduleId, opts);
             } catch (e) {
                 util.error(e);
             }
@@ -554,11 +554,11 @@ export default {
         if (wpy.template && wpy.template.code && type !== 'component') { // App 和 Component 不编译 wxml
             //cTemplate.compile(wpy.template.type, wpy.template.code, opath);
             wpy.template.npm = opath.npm;
-            cTemplate.compile(wpy.template);
+            cTemplate.compile(wpy.template, opts);
         }
 
         if (wpy.script.code) {
-            cScript.compile(wpy.script.type, wpy.script.code, type, opath);
+            cScript.compile(wpy.script.type, wpy.script.code, type, opath, opts);
         }
     }
 };

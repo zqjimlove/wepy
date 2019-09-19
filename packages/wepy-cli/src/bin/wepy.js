@@ -35,6 +35,7 @@ program
     .option('-o, --output <type>', '编译类型：web，weapp。默认为weapp')
     .option('-p, --platform <type>', '编译平台：browser, wechat，qq。默认为browser')
     .option('-w, --watch', '监听文件改动')
+    .option('-c, --clear', '清空编译目录')
     .option('--no-cache', '对于引用到的文件，即使无改动也会再次编译');
 
 program

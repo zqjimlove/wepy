@@ -9,49 +9,58 @@
 
 
 import util from './util';
+import findCacheDir from 'find-cache-dir';
+import os from 'os';
 
 const cachePath = '.wepycache';
 let _buildCache = null;
 let _cacheChanged = false;
 let _filelistCache = {};
 let _cssDeps = {};
+let _cache = {};
 
 export default {
+    setAppOpath(opath){
+        _cache.appOpath = opath;
+    },
+    getAppOpath(){
+        return _cache.appOpath;
+    },
     setParams (v) {
-        this._params = v;
+        _cache._params = v;
     },
     getParams () {
-        return this._params;
+        return _cache._params;
     },
     setExt (v) {
-        this._ext = v;
+        _cache._ext = v;
     },
     getExt () {
-        return this._ext || '.wpy';
+        return _cache._ext || '.wpy';
     },
     getSrc () {
-        return this._src || 'src';
+        return _cache._src || 'src';
     },
     setSrc (v = 'src') {
-        this._src = v;
+        _cache._src = v;
     },
     getDist () {
-        return this._dist || 'dist';
+        return _cache._dist || 'dist';
     },
     setDist (v = 'dist') {
-        this._dist = v;
+        _cache._dist = v;
     },
     setPages (v = []) {
-        this._pages = v;
+        _cache._pages = v;
     },
     getPages () {
-        return this._pages || [];
+        return _cache._pages || [];
     },
     getConfig () {
-        return this._config || null;
+        return _cache._config || null;
     },
     setConfig (v = null) {
-        this._config = v;
+        _cache._config = v;
     },
     setFileList (key, v) {
         _filelistCache[key] = v;
@@ -103,5 +112,20 @@ export default {
     },
     getCssDep (file) {
         return _cssDeps[file] || [];
+    },
+    getCache(){
+        return _cache;
+    },
+    setCache(cache){
+        _cache = cache;
     }
 }
+
+
+export let defaultCacheKeys = {
+    wepyVersion: '1.7.x',
+    company: 'gd'
+}
+
+export const cacheDir = findCacheDir({name:'wepy'}) || os.tmpdir();
+ 

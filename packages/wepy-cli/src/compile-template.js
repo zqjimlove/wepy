@@ -15,6 +15,9 @@ import cache from './cache';
 import cWpy from './compile-wpy';
 
 import loader from './loader';
+import serialize from 'serialize-javascript';
+import cacache from 'cacache';
+import crypto from 'crypto'
 
 const PREFIX = '$';
 const JOIN = '$';
@@ -524,67 +527,106 @@ export default {
         return node;
     },
 
-    compile (template) {
+    compile (template, opts = {}) {
         let lang = template.type;
-        let content = util.attrReplace(template.code);
 
         let config = util.getConfig();
         let src = cache.getSrc();
         let dist = cache.getDist();
         let self = this;
+        
+        let opath = path.parse(template.src);
 
+        let { cacheDir, cacheKeys } = opts;
 
-        let compiler = loader.loadCompiler(lang);
+        let target = util.getDistPath(opath, config.output === 'ant' ? 'axml' : config.output === 'baidu' ? 'swan' : 'wxml', src, dist);
 
-        if (!compiler) {
-            return;
-        }
-
-        if (lang === 'pug') { // fix indent for pug, https://github.com/wepyjs/wepy/issues/211
-            let indent = util.getIndent(content);
-            if (indent.firstLineIndent) {
-                content = util.fixIndent(content, indent.firstLineIndent * -1, indent.char);
-            }
-        }
-
-        compiler(content, config.compilers[lang] || {}).then(content => {
-            let opath = path.parse(template.src);
-            let node = cWpy.createParser(opath).parseFromString(content);
-            node = this.compileXML(node, template);
-            opath.npm = template.npm;
-            let target = util.getDistPath(opath, config.output === 'ant' ? 'axml' : config.output === 'baidu' ? 'swan' : 'wxml', src, dist);
-
-            if (node.childNodes.length === 0) {
-                // empty node tostring will cause an error.
-                node = '';
-            } else {
-                // https://github.com/jindw/xmldom/blob/master/dom.js#L585
-                // https://github.com/jindw/xmldom/blob/master/dom.js#L919
-                // if childNode is only one Text, then will get an error in doc.toString
-                if (node.documentElement === null && node.nodeType === 9) {
-                    node.nodeType = 11;
-                }
-                // xmldom will auto generate something like xmlns:wx.
-                node = node.toString().replace(/xmlns[^\s>]*/g, '');
-            }
-
-            let plg = new loader.PluginHelper(config.plugins, {
-                type: 'wxml',
-                code: util.decode(node.toString()),
-                file: target,
-                output (p) {
-                    util.output(p.action, p.file);
-                },
-                done (rst) {
-                    util.output('写入', rst.file);
-                    rst.code = self.replaceBooleanAttr(rst.code);
-                    util.writeFile(target, rst.code);
-                }
-            });
-        }).catch((e) => {
-            console.log(e);
+        let _cacheKey = serialize({
+            ...cacheKeys,
+            filePath: target,
+            hash: crypto
+                .createHash('md4')
+                .update(JSON.stringify(template.code))
+                .digest('hex')
         });
+        
+        function enqueue(){
+            let content = util.attrReplace(template.code);
+            let compiler = loader.loadCompiler(lang);
 
+            if (!compiler) {
+                return;
+            }
+
+            if (lang === 'pug') { // fix indent for pug, https://github.com/wepyjs/wepy/issues/211
+                let indent = util.getIndent(content);
+                if (indent.firstLineIndent) {
+                    content = util.fixIndent(content, indent.firstLineIndent * -1, indent.char);
+                }
+            }
+
+            compiler(content, config.compilers[lang] || {}).then(content => {
+                
+                let node = cWpy.createParser(opath).parseFromString(content);
+                node = this.compileXML(node, template);
+                opath.npm = template.npm;
+                
+
+                if (node.childNodes.length === 0) {
+                    // empty node tostring will cause an error.
+                    node = '';
+                } else {
+                    // https://github.com/jindw/xmldom/blob/master/dom.js#L585
+                    // https://github.com/jindw/xmldom/blob/master/dom.js#L919
+                    // if childNode is only one Text, then will get an error in doc.toString
+                    if (node.documentElement === null && node.nodeType === 9) {
+                        node.nodeType = 11;
+                    }
+                    // xmldom will auto generate something like xmlns:wx.
+                    node = node.toString().replace(/xmlns[^\s>]*/g, '');
+                }
+
+                let plg = new loader.PluginHelper(config.plugins, {
+                    type: 'wxml',
+                    code: util.decode(node.toString()),
+                    file: target,
+                    output (p) {
+                        util.output(p.action, p.file);
+                    },
+                    done (rst) {
+                        // util.output('写入', rst.file);
+                        rst.code = self.replaceBooleanAttr(rst.code);
+                        // util.writeFile(target, rst.code);
+                        rst.target = target;
+                       if (cacheDir && opts.cache) {
+                           cacache.put(cacheDir,_cacheKey,JSON.stringify(rst)).then(()=>{
+                               wirte(rst);
+                           })
+                       } else {
+                           wirte(rst);
+                       }
+                    }
+                });
+            }).catch((e) => {
+                console.log(e);
+            });
+
+        }
+
+        function wirte({ target, code, file },isCache = false){
+            util.output((isCache?'缓存':'')+'写入', file);
+            util.writeFile(target, code);
+        }
+
+        if (cacheDir && opts.cache) {
+            cacache.get(cacheDir, _cacheKey).then(({ data }) => {
+                let result = JSON.parse(data);
+                wirte(result,true)
+            },enqueue.bind(this));
+        } else {
+            enqueue.call(this);
+        }
+        
         //util.log('WXML: ' + path.relative(process.cwd(), target), '写入');
         //util.writeFile(target, util.decode(node.toString()));
     }

@@ -44,7 +44,8 @@ colors.setTheme({
     '测试': 'red',
     '拷贝': 'yellow',
     '编译': 'blue',
-    '写入': 'green'
+    '写入': 'green',
+    '缓存写入': 'green',
 });
 
 let ID_CACHE = {};
@@ -457,7 +458,11 @@ const utils = {
         if (!this.isDir(opath.dir)) {
             mkdirp.sync(opath.dir);
         }
-        fs.writeFileSync(p, data);
+        try {
+            fs.writeFileSync(p, data);
+        } catch (error) {
+            throw error;
+        }
     },
     copy(opath, ext, src, dist) {
         let target = this.getDistPath(opath, ext, src, dist);

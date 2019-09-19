@@ -13,7 +13,6 @@ import chokidar from 'chokidar';
 import compareVersions from 'compare-versions';
 import ignore from 'ignore';
 
-import cache from './cache';
 import util from './util';
 import cWpy from './compile-wpy';
 import cStyle from './compile-style';
@@ -24,11 +23,18 @@ import resolve from './resolve';
 
 import toWeb from './web/index';
 
+import cache, { defaultCacheKeys, cacheDir } from './cache';
+
+import cluster from 'cluster';
+import rimraf from 'rimraf';
+const Queue = require('better-queue');
+const os = require('os')
+
 let watchReady = false;
 let preventDup = {};
 
 
-export default {
+ const compiler = {
     /**
      * find parent, import xxxx from xxx;
      */
@@ -133,6 +139,11 @@ export default {
             }
         }).on('ready', () => {
             watchReady = true;
+            console.timeEnd('build')
+            this.compileQueue && this.compileQueue.idleThreadsArr.forEach(thread=>{
+                thread.send({ name: 'END' });
+            })
+            this.compileQueue = null;
             util.log('开始监听文件改动。', '信息');
         });
     },
@@ -166,8 +177,18 @@ export default {
             return false;
         }
 
+        
+
         resolve.init(wepyrc.resolve || {});
         loader.attach(resolve);
+
+        let dist = config.target || wepyrc.target || 'dist';
+        if(config.clear){
+            let distPath = path.join(util.currentDir, dist);
+            if(util.isDir(distPath)){
+                rimraf.sync(distPath)
+            }
+        }
 
         if (this.wepyUpdate()) { // 需要更新wepy版本
             util.log('检测到wepy版本不符合要求，正在尝试更新，请稍等。', '信息');
@@ -276,7 +297,7 @@ export default {
     },
 
     build (cmd) {
-
+        console.time('build')
         let wepyrc = util.getConfig();
 
         let src = cmd.source || wepyrc.src;
@@ -368,14 +389,15 @@ export default {
                 }
             })
         } else {
+            this._createQueue(cmd);
             files.forEach((f) => {
                 let opath = path.parse(path.join(current, src, f));
                 if (file) {
-                    this.compile(opath);
+                    this.compile(opath, cmd, !util.isWatch );
                 } else { // 不指定文件编译时，跳过引用文件编译
                     let refs = this.findReference(f);
                     if (!refs.length)
-                        this.compile(opath);
+                        this.compile(opath, cmd, !util.isWatch );
                 }
             });
         }
@@ -405,10 +427,100 @@ export default {
 
         if (cmd.watch) {
             util.isWatch = true;
-            this.watch(cmd);
+            if (this.compileQueue) {
+                this.compileQueue.on('drain',()=>{
+                    this.watch(cmd);
+                })
+            } else {
+                this.watch(cmd);
+            }
         }
     },
-    compile(opath) {
+    
+    compile(opath, cmd, isUseQueue = true ) {
+       if (opath.base === 'app' + cache.getExt()) {
+           cmd.appOpath = opath;
+           cache.setAppOpath(opath);
+           this._compile(opath, cmd);
+       } else if (!isUseQueue) {
+           this._compile(opath, cmd);
+       } else {
+           this.compileQueue.push({
+               id: 'task_' + path.join(opath.dir, opath.base),
+               opath
+           });
+       }
+    },
+    _createQueue(cmd){
+        const cpusCount = os.cpus().length;
+        const idleThreadsArr = [];
+        this.compileQueue = new Queue(this._queueExcule(cpusCount,idleThreadsArr,cmd),{
+            concurrent: cpusCount
+        })
+        this.compileQueue.idleThreadsArr = idleThreadsArr;
+    },
+    _queueExcule(cpusCount,idleThreadsArr,cmd){
+        
+        let threadsCount = 0;
+
+        return function(_data, cb) {
+            try {
+                let child 
+                if (threadsCount < cpusCount) {
+                    cluster.settings.exec = __filename;
+                    child = cluster.fork();
+
+                    child.on('message', msg => {
+                        if (msg.name === 'COMPILED') {
+                            idleThreadsArr.push(child);
+                            child.$queue_cb(null, true);
+                        }
+                        if(msg.name === 'ERROR'){
+                            throw msg.err;
+                        }
+                    });
+
+                    child.on('error', err => {
+                        console.error(err);
+                        idleThreadsArr.push(child);
+                        cb(null, true);
+                    });
+
+                    child.on('exit', _ => {
+                        threadsCount--;
+                        idleThreadsArr.splice(idleThreadsArr.indexOf(child), 1);
+                        cb(null, true);
+                    });
+
+                    child.send({
+                        name:'INIT_REQUEST',
+                        config: {
+                            source: cmd.source,
+                            target: cmd.target,
+                            wpyExt: cmd.wpyExt,
+                            output: cmd.output,
+                            cache: cmd.cache
+                        },
+                        pages:cache.getPages(),
+                        appOpath:cmd.appOpath
+                    })
+
+                    threadsCount++;
+                } else {
+                    child = idleThreadsArr.pop();
+                }
+                
+                child.$queue_cb = cb;
+                child.send({
+                    data: _data,
+                    name: 'COMPILER_REQUEST'
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        };
+    },
+    _compile(opath, cmd) {
         let src = cache.getSrc();
         let dist = cache.getDist();
         let ext = cache.getExt();
@@ -419,24 +531,34 @@ export default {
             return;
         }
 
+        let compileOpts = {
+            cache: cmd.cache && !util.isWatch
+        };
+        
+        compileOpts.cacheKeys = {
+            ...defaultCacheKeys,
+            output: cmd.output
+        };
+        compileOpts.cacheDir = cacheDir;
+
         switch(opath.ext) {
             case ext:
-                cWpy.compile(opath);
+                cWpy.compile(opath, compileOpts);
                 break;
             case '.less':
-                cStyle.compile('less', opath);
+                cStyle.compile('less', opath, compileOpts);
                 break;
             case '.sass':
-                cStyle.compile('sass', opath);
+                cStyle.compile('sass', opath, compileOpts);
                 break;
             case '.scss':
-                cStyle.compile('scss', opath);
+                cStyle.compile('scss', opath, compileOpts);
                 break;
             case '.js':
-                cScript.compile('babel', null, 'js', opath);
+                cScript.compile('babel', null, 'js', opath, compileOpts);
                 break;
             case '.ts':
-                cScript.compile('typescript', null, 'ts', opath);
+                cScript.compile('typescript', null, 'ts', opath, compileOpts);
                 break;
             default:
                 util.output('拷贝', path.join(opath.dir, opath.base));
@@ -462,5 +584,87 @@ export default {
                     }
                 });
         }
+    },
+    workerInit(cmd){
+        let wepyrc = util.getConfig();
+
+        let src = cmd.source || wepyrc.src;
+        let dist = cmd.target || wepyrc.target;
+        let ext = cmd.wpyExt || wepyrc.wpyExt;
+
+        if (src === undefined)
+            src = 'src';
+        if (dist === undefined)
+            dist = 'dist';
+        if (ext === undefined)
+            ext = '.wpy';
+
+        cmd.source = src;
+        cmd.dist = dist;
+        cmd.wpyExt = ext;
+
+        if (ext.indexOf('.') === -1)
+            ext = '.' + ext;
+
+       
+
+        cache.setParams(cmd);
+        cache.setSrc(src);
+        cache.setDist(dist);
+        cache.setExt(ext);
+
+
+        // If dist/npm/wepy is not exsit, then clear the build cache.
+        if (!util.isDir(path.join(util.currentDir, dist, 'npm', 'wepy'))) {
+            cmd.cache = false;
+        }
+        if (!cmd.cache) {
+            cache.clearBuildCache();
+        }
+
+        resolve.init(wepyrc.resolve || {});
+
+        loader.attach(resolve);
     }
+}
+
+
+export default compiler;
+
+if (cluster.isWorker) {
+    let isInitChildProcess = false;
+    let _config;
+
+    let killTimeer;
+
+    process.on('message', ({ data, config, name, pages, appOpath }) => {
+        // console.log(`${name},msg:${JSON.stringify(appOpath)}`);
+        clearTimeout(killTimeer)
+        if (name === 'INIT_REQUEST') {
+            _config = config;
+            if (!isInitChildProcess) {
+                isInitChildProcess = true;
+                compiler.workerInit(config);
+                cache.setPages(pages);
+                cache.setAppOpath(appOpath);
+            }
+            return;
+        }
+        if (name === 'COMPILER_REQUEST') {
+            try {
+                compiler._compile(data.opath, _config);
+                process.send({ name: 'COMPILED' });
+            } catch (err) {
+                process.send({ name: 'ERROR', err });
+            }
+            return;
+        }
+
+        if (name === 'END') {
+            killTimeer = setTimeout(() => {
+                process.exit(0);
+            }, 20000);
+        }
+        process.send({ name: 'COMPILED' });
+    });
 }

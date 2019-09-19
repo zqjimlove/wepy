@@ -1,9 +1,18 @@
 import compile from '../compile';
 
-exports = module.exports = (program) => {
+import cacache from 'cacache';
+import { cacheDir, defaultCacheKeys } from '../cache';
 
-	if (compile.init(program)) {
-	    compile.build(program);
-	}
-
-}
+exports = module.exports = program => {
+    function doCompile() {
+        if (compile.init(program)) {
+            compile.build(program);
+        }
+		}
+		
+    if (!program.cache) {
+        cacache.rm.all(cacheDir).then(doCompile);
+    } else {
+        doCompile();
+    }
+};
