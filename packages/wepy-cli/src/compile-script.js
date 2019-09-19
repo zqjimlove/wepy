@@ -23,6 +23,8 @@ import resolve from './resolve';
 import cacache from 'cacache';
 
 
+
+
 const currentPath = util.currentDir;
 
 let appPath, npmPath, src, dist;
@@ -232,6 +234,7 @@ export default {
     },
 
     compile (lang, code, type, opath, opts = {}) {
+        util.startCompile();
         let config = util.getConfig();
         src = cache.getSrc();
         dist = cache.getDist();
@@ -335,6 +338,7 @@ export default {
                 if (!opath.compiled && type === 'npm' && opath.ext === '.wpy') { // 第三方npm组件，后缀恒为wpy
                     opath.compiled = true
                     cWpy.compile(opath);
+                    util.endCompile();
                     return;
                 }
     
@@ -378,12 +382,14 @@ export default {
                 cache.saveBuildCache();
             }).catch((e) => {
                 util.error(e);
+                util.endCompile();
             });
         }
 
         function wirte({ target, code, file }, isCache = false){
             util.output((isCache?'缓存':'')+'写入', file);
             util.writeFile(target, code);
+            util.endCompile();
         }
 
         if (cacheDir && opts.cache) {

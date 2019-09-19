@@ -17,6 +17,7 @@ import {exec} from 'child_process';
 import hash from 'hash-sum';
 import cache from './cache';
 import resolve from './resolve';
+import EventEmitter from 'events';
 
 colors.enabled = true;
 
@@ -49,8 +50,28 @@ colors.setTheme({
 });
 
 let ID_CACHE = {};
-const utils = {
 
+let _countCompileAction = 0;
+class CompileEmitter extends EventEmitter{};
+let compileEmitter = new CompileEmitter();
+
+
+const utils = {
+    compileEmitter,
+    startCompile(){
+        _countCompileAction++;
+        // console.log(`startCompile#_countCompileAction:${_countCompileAction},process:${process.pid}`);
+        compileEmitter.emit('startCompile');
+    },
+    endCompile(){
+        _countCompileAction--;
+        // console.log(`_countCompileAction:${_countCompileAction},process:${process.pid}`);
+        if (_countCompileAction <= 0) {
+            _countCompileAction = 0;
+            compileEmitter.emit('allCompileEnd')
+            // console.log(`allCompileEnd,process:${process.pid}`);
+        }
+    },
     seqPromise(promises) {
         return new Promise((resolve, reject) => {
 
@@ -667,6 +688,9 @@ const utils = {
     }
 }
 export default utils
+
+
+
 
 
 

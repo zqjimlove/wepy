@@ -27,6 +27,7 @@ import cache, { defaultCacheKeys, cacheDir } from './cache';
 
 import cluster from 'cluster';
 import rimraf from 'rimraf';
+
 const Queue = require('better-queue');
 const os = require('os')
 
@@ -139,11 +140,6 @@ let preventDup = {};
             }
         }).on('ready', () => {
             watchReady = true;
-            console.timeEnd('build')
-            this.compileQueue && this.compileQueue.idleThreadsArr.forEach(thread=>{
-                thread.send({ name: 'END' });
-            })
-            this.compileQueue = null;
             util.log('开始监听文件改动。', '信息');
         });
     },
@@ -389,7 +385,6 @@ let preventDup = {};
                 }
             })
         } else {
-            this._createQueue(cmd);
             files.forEach((f) => {
                 let opath = path.parse(path.join(current, src, f));
                 if (file) {
@@ -442,9 +437,12 @@ let preventDup = {};
            cmd.appOpath = opath;
            cache.setAppOpath(opath);
            this._compile(opath, cmd);
-       } else if (!isUseQueue) {
+       } else if (!isUseQueue || cluster.isWorker) {
            this._compile(opath, cmd);
-       } else {
+       } else if(cluster.isMaster && isUseQueue) {
+           if (!this.compileQueue) {
+               this._createQueue(cmd);
+           }
            this.compileQueue.push({
                id: 'task_' + path.join(opath.dir, opath.base),
                opath
@@ -455,60 +453,75 @@ let preventDup = {};
         const cpusCount = os.cpus().length;
         const idleThreadsArr = [];
         this.compileQueue = new Queue(this._queueExcule(cpusCount,idleThreadsArr,cmd),{
-            concurrent: cpusCount
+            concurrent: cpusCount - 1
         })
         this.compileQueue.idleThreadsArr = idleThreadsArr;
+        this.compileQueue.on('drain',()=>{
+            this.compileQueue._drain = true
+        })
     },
     _queueExcule(cpusCount,idleThreadsArr,cmd){
-        
         let threadsCount = 0;
+
+        cluster.settings.exec = __filename;
+        for (let i = 0; i < cpusCount - 1; i++) {
+            threadsCount++;
+            let child = cluster.fork();
+            idleThreadsArr.push(child);
+
+            child.on('message', msg => {
+                if (msg.name === 'COMPILED') {
+                    idleThreadsArr.push(child);
+                    child.$queue_cb(null, true);
+                }
+                if (msg.name === 'ERROR') {
+                    throw JSON.stringify(msg.err);
+                }
+
+                if (msg.name === 'KILL_REQUEST') {
+                    if (this.compileQueue._drain) {
+                        child.send({ name: 'KILL' });
+                    } else {
+                        this.compileQueue.on('drain', () => {
+                            child.send({ name: 'KILL' });
+                        });
+                    }
+                }
+            });
+
+            child.on('error', err => {
+                console.error(err);
+                idleThreadsArr.push(child);
+                child.$queue_cb(null, true);
+            });
+
+            child.on('exit', _ => {
+                --threadsCount;
+                idleThreadsArr.splice(idleThreadsArr.indexOf(child), 1);
+                if (threadsCount < 1) {
+                    console.timeEnd('build');
+                    this.compileQueue = null;
+                }
+                child.$queue_cb(null, true);
+            });
+
+            child.send({
+                name: 'INIT_REQUEST',
+                config: {
+                    source: cmd.source,
+                    target: cmd.target,
+                    wpyExt: cmd.wpyExt,
+                    output: cmd.output,
+                    cache: cmd.cache
+                },
+                pages: cache.getPages(),
+                appOpath: cmd.appOpath
+            });
+        }
 
         return function(_data, cb) {
             try {
-                let child 
-                if (threadsCount < cpusCount) {
-                    cluster.settings.exec = __filename;
-                    child = cluster.fork();
-
-                    child.on('message', msg => {
-                        if (msg.name === 'COMPILED') {
-                            idleThreadsArr.push(child);
-                            child.$queue_cb(null, true);
-                        }
-                        if(msg.name === 'ERROR'){
-                            throw msg.err;
-                        }
-                    });
-
-                    child.on('error', err => {
-                        console.error(err);
-                        idleThreadsArr.push(child);
-                        cb(null, true);
-                    });
-
-                    child.on('exit', _ => {
-                        threadsCount--;
-                        idleThreadsArr.splice(idleThreadsArr.indexOf(child), 1);
-                        cb(null, true);
-                    });
-
-                    child.send({
-                        name:'INIT_REQUEST',
-                        config: {
-                            source: cmd.source,
-                            target: cmd.target,
-                            wpyExt: cmd.wpyExt,
-                            output: cmd.output,
-                            cache: cmd.cache
-                        },
-                        pages:cache.getPages(),
-                        appOpath:cmd.appOpath
-                    })
-
-                    threadsCount++;
-                } else {
-                    child = idleThreadsArr.pop();
-                }
+                let child = idleThreadsArr.pop();
                 
                 child.$queue_cb = cb;
                 child.send({
@@ -561,6 +574,7 @@ let preventDup = {};
                 cScript.compile('typescript', null, 'ts', opath, compileOpts);
                 break;
             default:
+                util.startCompile();
                 util.output('拷贝', path.join(opath.dir, opath.base));
 
                 let plg = new loader.PluginHelper(config.plugins, {
@@ -577,10 +591,12 @@ let preventDup = {};
                         } else {
                             util.copy(path.parse(rst.file));
                         }
+                        util.endCompile();
                     },
                     error (rst) {
                         util.warning(rst.err);
                         util.copy(path.parse(rst.file));
+                        util.endCompile();
                     }
                 });
         }
@@ -634,13 +650,11 @@ export default compiler;
 if (cluster.isWorker) {
     let isInitChildProcess = false;
     let _config;
-
+    let QUEUE_DRAIN = false;
     let killTimeer;
 
-    process.on('message', ({ data, config, name, pages, appOpath }) => {
-        // console.log(`${name},msg:${JSON.stringify(appOpath)}`);
-        clearTimeout(killTimeer)
-        if (name === 'INIT_REQUEST') {
+    const MessageHandler = {
+        'INIT_REQUEST'({  config, pages, appOpath }){
             _config = config;
             if (!isInitChildProcess) {
                 isInitChildProcess = true;
@@ -648,23 +662,43 @@ if (cluster.isWorker) {
                 cache.setPages(pages);
                 cache.setAppOpath(appOpath);
             }
-            return;
-        }
-        if (name === 'COMPILER_REQUEST') {
+        },
+        'COMPILER_REQUEST'({ data }){
             try {
                 compiler._compile(data.opath, _config);
                 process.send({ name: 'COMPILED' });
             } catch (err) {
+                console.error(err);
                 process.send({ name: 'ERROR', err });
             }
-            return;
-        }
-
-        if (name === 'END') {
+        },
+        
+        'END'(){
             killTimeer = setTimeout(() => {
                 process.exit(0);
             }, 20000);
+        },
+        'KILL'(){
+            process.exit(0)
         }
-        process.send({ name: 'COMPILED' });
+        
+    }
+    
+    process.on('message', (msg) => {
+        // console.log(`${name},msg:${JSON.stringify(appOpath)}`);
+        // data && console.log(`message#${name}#${JSON.stringify(data.opath||{})}#`+process.pid);
+        clearTimeout(killTimeer)
+        MessageHandler[msg.name](msg);
     });
+
+    util.compileEmitter.on('allCompileEnd', () => {
+        clearTimeout(killTimeer)
+        killTimeer = setTimeout(() => {
+            process.send({ name: 'KILL_REQUEST' });
+        }, 1000);
+    });
+
+    // util.compileEmitter.on('startCompile', () => {
+    //     clearTimeout(killTimeer);
+    // });
 }

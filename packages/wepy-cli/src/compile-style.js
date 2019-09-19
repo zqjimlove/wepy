@@ -28,6 +28,7 @@ const LANG_MAP = {
 
 export default {
     compile (styles, requires, opath, moduleId, opts = {}) {
+        util.startCompile();
         let config = util.getConfig();
         let src = cache.getSrc();
         let dist = cache.getDist();
@@ -232,12 +233,14 @@ export default {
                 });
             }).catch((e) => {
                 util.error(e);
+                util.endCompile();
             });
         }
 
         function wirte({ target, code, file },isCache = false){
             util.output((isCache ? '缓存' : '') + '写入', file);
             util.writeFile(target, code);
+            util.endCompile();
         }
 
         if (cacheDir && opts.cache) {

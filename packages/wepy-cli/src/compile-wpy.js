@@ -25,6 +25,7 @@ import cScript from './compile-script';
 import toWeb from './web/index';
 import loader from './loader';
 import resolve from './resolve';
+import util from './util';
 
 let globalLocator = {};
 
@@ -456,6 +457,7 @@ export default {
     },
 
     compile (opath, opts) {
+        util.startCompile();
         let filepath = path.join(opath.dir, opath.base);
         let src = cache.getSrc();
         let dist = cache.getDist();
@@ -490,6 +492,7 @@ export default {
         let wpy = this.resolveWpy(opath);
 
         if (!wpy) {
+            util.endCompile();
             return;
         }
 
@@ -560,6 +563,7 @@ export default {
         if (wpy.script.code) {
             cScript.compile(wpy.script.type, wpy.script.code, type, opath, opts);
         }
+        util.endCompile();
     }
 };
 

@@ -528,6 +528,7 @@ export default {
     },
 
     compile (template, opts = {}) {
+        util.startCompile();
         let lang = template.type;
 
         let config = util.getConfig();
@@ -555,6 +556,7 @@ export default {
             let compiler = loader.loadCompiler(lang);
 
             if (!compiler) {
+                util.endCompile();
                 return;
             }
 
@@ -616,6 +618,7 @@ export default {
         function wirte({ target, code, file },isCache = false){
             util.output((isCache?'缓存':'')+'写入', file);
             util.writeFile(target, code);
+            util.endCompile();
         }
 
         if (cacheDir && opts.cache) {

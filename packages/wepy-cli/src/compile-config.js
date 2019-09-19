@@ -19,6 +19,7 @@ import crypto from 'crypto'
 
 export default {
     compile(config, opath, opts = {}) {
+        util.startCompile();
         let src = cache.getSrc();
         let dist = cache.getDist();
         let wepyrc = cache.getConfig();
@@ -74,6 +75,7 @@ export default {
         function wirte({ target, code, file },isCache = false){
             util.output((isCache ? '缓存' : '') + '写入', file);
             util.writeFile(target, code);
+            util.endCompile();
         }
 
         if (opts.cache) {
