@@ -641,6 +641,8 @@ let preventDup = {};
         resolve.init(wepyrc.resolve || {});
 
         loader.attach(resolve);
+
+        this.checkPlugin(wepyrc.plugins)
     }
 }
 

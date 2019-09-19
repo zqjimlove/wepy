@@ -11,6 +11,8 @@
 import util from './util';
 import findCacheDir from 'find-cache-dir';
 import os from 'os';
+import serialize from 'serialize-javascript';
+import crypto from 'crypto'
 
 const cachePath = '.wepycache';
 let _buildCache = null;
@@ -61,6 +63,10 @@ export default {
     },
     setConfig (v = null) {
         _cache._config = v;
+        defaultCacheKeys.configHash = crypto
+            .createHash('md4')
+            .update(serialize(v))
+            .digest('hex');
     },
     setFileList (key, v) {
         _filelistCache[key] = v;
