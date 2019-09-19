@@ -25,7 +25,6 @@ import cScript from './compile-script';
 import toWeb from './web/index';
 import loader from './loader';
 import resolve from './resolve';
-import util from './util';
 
 let globalLocator = {};
 
