@@ -4,7 +4,7 @@
   "description": "",
   "main": "bin/wepy.js",
   "bin": {
-    "wepy": "bin/wepy.js"
+    "wepy-next": "bin/wepy.js"
   },
   "scripts": {
     "build": "babel --presets es2015,stage-1 src/ --out-dir lib/ --source-maps",
@@ -14,14 +14,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git@github.com:wepyjs/wepy.git"
+    "url": "git@github.com:zqjimlove/wepy.git"
   },
   "author": "Gcaufy",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/wepyjs/wepy/issues"
+    "url": "https://github.com/zqjimlove/wepy/issues"
   },
-  "homepage": "https://github.com/wepyjs/wepy#readme",
+  "homepage": "https://github.com/zqjimlove/wepy#readme",
   "devDependencies": {
     "babel": "^6.23.0",
     "babel-cli": "^6.18.0",
