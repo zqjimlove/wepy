@@ -8,8 +8,8 @@ exports = module.exports = program => {
         if (compile.init(program)) {
             compile.build(program);
         }
-		}
-		
+    }
+
     if (!program.cache) {
         cacache.rm.all(cacheDir).then(doCompile);
     } else {

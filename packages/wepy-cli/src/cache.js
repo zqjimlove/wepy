@@ -7,12 +7,11 @@
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
  */
 
-
 import util from './util';
 import findCacheDir from 'find-cache-dir';
 import os from 'os';
 import serialize from 'serialize-javascript';
-import crypto from 'crypto'
+import crypto from 'crypto';
 
 const cachePath = '.wepycache';
 let _buildCache = null;
@@ -22,61 +21,60 @@ let _cssDeps = {};
 let _cache = {};
 
 export default {
-    setAppOpath(opath){
+    setAppOpath(opath) {
         _cache.appOpath = opath;
     },
-    getAppOpath(){
+    getAppOpath() {
         return _cache.appOpath;
     },
-    setParams (v) {
+    setParams(v) {
         _cache._params = v;
     },
-    getParams () {
+    getParams() {
         return _cache._params;
     },
-    setExt (v) {
+    setExt(v) {
         _cache._ext = v;
     },
-    getExt () {
+    getExt() {
         return _cache._ext || '.wpy';
     },
-    getSrc () {
+    getSrc() {
         return _cache._src || 'src';
     },
-    setSrc (v = 'src') {
+    setSrc(v = 'src') {
         _cache._src = v;
     },
-    getDist () {
+    getDist() {
         return _cache._dist || 'dist';
     },
-    setDist (v = 'dist') {
+    setDist(v = 'dist') {
         _cache._dist = v;
     },
-    setPages (v = []) {
+    setPages(v = []) {
         _cache._pages = v;
     },
-    getPages () {
+    getPages() {
         return _cache._pages || [];
     },
-    getConfig () {
+    getConfig() {
         return _cache._config || null;
     },
-    setConfig (v = null) {
+    setConfig(v = null) {
         _cache._config = v;
         defaultCacheKeys.configHash = crypto
             .createHash('md4')
             .update(serialize(v))
             .digest('hex');
     },
-    setFileList (key, v) {
+    setFileList(key, v) {
         _filelistCache[key] = v;
     },
-    getFileList (key) {
+    getFileList(key) {
         return _filelistCache[key] || null;
     },
-    getBuildCache (file) {
-        if (_buildCache)
-            return _buildCache;
+    getBuildCache(file) {
+        if (_buildCache) return _buildCache;
 
         if (util.isFile(cachePath)) {
             _buildCache = util.readFile(cachePath);
@@ -89,7 +87,7 @@ export default {
 
         return _buildCache || {};
     },
-    setBuildCache (file) {
+    setBuildCache(file) {
         let cache = this.getBuildCache();
         cache[file] = util.getModifiedTime(file);
         _buildCache = cache;
@@ -108,7 +106,7 @@ export default {
         let cache = this.getBuildCache();
         return cache[file] && cache[file] === util.getModifiedTime(file);
     },
-    addCssDep (file, context) {
+    addCssDep(file, context) {
         if (!_cssDeps[file]) {
             _cssDeps[file] = [];
         }
@@ -116,22 +114,21 @@ export default {
             _cssDeps[file].push(context);
         }
     },
-    getCssDep (file) {
+    getCssDep(file) {
         return _cssDeps[file] || [];
     },
-    getCache(){
+    getCache() {
         return _cache;
     },
-    setCache(cache){
+    setCache(cache) {
         _cache = cache;
     }
-}
-
+};
 
 export let defaultCacheKeys = {
     wepyVersion: '1.7.x',
-    company: 'gd'
-}
+    company: 'gd',
+    NODE_ENV: process.env.NODE_ENV
+};
 
-export const cacheDir = findCacheDir({name:'wepy'}) || os.tmpdir();
- 
+export const cacheDir = findCacheDir({ name: 'wepy' }) || os.tmpdir();

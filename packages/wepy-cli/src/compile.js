@@ -335,7 +335,7 @@ let preventDup = {};
         }
 
         if (file) { // 指定文件编译时
-            if (file.indexOf(ext) === -1) { // 是wpy文件，则直接编译，否则检查引用源
+            if (file.indexOf(ext) === -1) { // 不是wpy文件，则直接编译，否则检查引用源
                 let refs = this.findReference(file);
                 if (refs.length === 0) { // 无引用源时，编译当前文件，否则编译引用源。
                     files = [file];
