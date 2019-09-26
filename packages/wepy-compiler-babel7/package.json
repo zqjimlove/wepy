@@ -1,0 +1,23 @@
+{
+  "name": "wepy-compiler-babel7",
+  "version": "1.5.4",
+  "description": "wepy compile babel7",
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "babel --presets es2015,stage-1 src/ --out-dir lib/ --source-maps"
+  },
+  "keywords": [
+    "babel"
+  ],
+  "author": "Gcaufy",
+  "license": "MIT",
+  "dependencies": {
+    "@babel/core": "^7.6.2"
+  },
+  "devDependencies": {
+    "babel": "^6.23.0",
+    "babel-cli": "^6.18.0",
+    "babel-preset-es2015": "^6.18.0",
+    "babel-preset-stage-1": "^6.16.0"
+  }
+}

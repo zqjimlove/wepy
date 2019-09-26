@@ -27,6 +27,7 @@ import cache, { defaultCacheKeys, cacheDir } from './cache';
 
 import cluster from 'cluster';
 import rimraf from 'rimraf';
+import chalk from 'chalk';
 
 const Queue = require('better-queue');
 const os = require('os')
@@ -34,6 +35,7 @@ const os = require('os')
 let watchReady = false;
 let preventDup = {};
 
+let startTime = 0;
 
  const compiler = {
     /**
@@ -132,7 +134,13 @@ let preventDup = {};
             if ((evt === 'change' || evt === 'add') && watchReady && !preventDup[filepath]) {
                 preventDup[filepath] = evt;
                 cmd.file = path.relative(src, filepath);
-                util.log('文件: ' + filepath, '变更');
+                // util.log('文件: ' + filepath, '变更');
+                let spinnerText = util.spinner.text;
+                let isSpinning = util.spinner.isSpinning
+                util.spinner.info(`${chalk.bgYellow('[变更]')} 文件：${filepath}`)
+                if (isSpinning) {
+                    util.spinner.start(spinnerText);
+                }
                 this.build(cmd);
                 setTimeout(() => {
                     preventDup[filepath] = false;
@@ -140,7 +148,9 @@ let preventDup = {};
             }
         }).on('ready', () => {
             watchReady = true;
+            util.spinner.stop()
             util.log('开始监听文件改动。', '信息');
+            util.spinner.start('Watching');
         });
     },
     checkCompiler (compilers) {
@@ -167,14 +177,16 @@ let preventDup = {};
     },
 
     init (config) {
+        util.spinner.start('Loading');
+        util.spinner.color = 'yellow';
+        startTime = Date.now();
+
         let wepyrc = util.getConfig();
         if (!wepyrc) {
             util.error('没有检测到wepy.config.js文件, 请执行`wepy new demo`创建');
             return false;
         }
-
         
-
         resolve.init(wepyrc.resolve || {});
         loader.attach(resolve);
 
@@ -187,6 +199,7 @@ let preventDup = {};
         }
 
         if (this.wepyUpdate()) { // 需要更新wepy版本
+            util.spinner.stop()
             util.log('检测到wepy版本不符合要求，正在尝试更新，请稍等。', '信息');
             util.exec(`npm install wepy --save`).then(d => {
                 util.log(`已完成更新，重新启动编译。`, '完成');
@@ -200,6 +213,8 @@ let preventDup = {};
         }
 
         if (!this.checkCompiler(wepyrc.compilers) || !this.checkPlugin(wepyrc.plugins)) {
+            util.spinner.stop()
+            util.log(`尝试安装 ${loader.missingNPM}`, '信息');
             util.exec(`npm info ${loader.missingNPM}`, true).then(d => {
                 util.log('检测到有效NPM包资源，正在尝试安装，请稍等。', '信息');
                 util.exec(`npm install ${loader.missingNPM} --save-dev`).then(d => {
@@ -231,6 +246,7 @@ let preventDup = {};
             loader.attach(resolve);
 
             if (!resolve.getPkg('wepy-web')) {
+                util.spinner.stop()
                 util.log('正在尝试安装缺失资源 wepy-web，请稍等。', '信息');
                 util.exec(`npm install wepy-web --save`).then(d => {
                     util.log(`已完成安装 wepy-web，重新启动编译。`, '完成');
@@ -254,6 +270,7 @@ let preventDup = {};
             loader.attach(resolve);
 
             if (!resolve.getPkg('wepy-ant')) {
+                util.spinner.stop()
                 util.log('正在尝试安装缺失资源 wepy-ant，请稍等。', '信息');
                 util.exec(`npm install wepy-ant --save`).then(d => {
                     util.log(`已完成安装 wepy-ant，重新启动编译。`, '完成');
@@ -277,6 +294,7 @@ let preventDup = {};
             loader.attach(resolve);
 
             if (!resolve.getPkg('wepy-baidu')) {
+                util.spinner.stop()
                 util.log('正在尝试安装缺失资源 wepy-baidu，请稍等。', '信息');
                 util.exec(`npm install wepy-baidu --save`).then(d => {
                     util.log(`已完成安装 wepy-baidu，重新启动编译。`, '完成');
@@ -293,7 +311,7 @@ let preventDup = {};
     },
 
     build (cmd) {
-        console.time('build')
+        
         let wepyrc = util.getConfig();
 
         let src = cmd.source || wepyrc.src;
@@ -420,21 +438,27 @@ let preventDup = {};
             util.writeFile(srcFrameworkInfoPath, frameworkInfo);
         }
 
-        if (cmd.watch) {
+        if (cmd.watch && !this.compileQueue) {
             util.isWatch = true;
-            if (this.compileQueue) {
-                this.compileQueue.on('drain',()=>{
-                    this.watch(cmd);
-                })
-            } else {
-                this.watch(cmd);
-            }
+            this.watch(cmd);
         }
+        // if (cmd.watch) {
+        //     util.isWatch = true;
+        //     if (this.compileQueue) {
+        //         this.compileQueue.on('drain',()=>{
+        //             this.watch(cmd);
+        //         })
+        //     } else {
+        //         this.watch(cmd);
+        //     }
+        // }
     },
     
     compile(opath, cmd, isUseQueue = true ) {
        if (opath.base === 'app' + cache.getExt()) {
            cmd.appOpath = opath;
+           util.spinner.succeed(`Wepy 入口文件：${path.join(opath.base)}`)
+           util.spinner.start('Loading...')
            cache.setAppOpath(opath);
            this._compile(opath, cmd);
        } else if (!isUseQueue || cluster.isWorker) {
@@ -462,8 +486,10 @@ let preventDup = {};
     },
     _queueExcule(cpusCount,idleThreadsArr,cmd){
         let threadsCount = 0;
-
+        let src = cache.getSrc();
+        let hasErr = false;
         cluster.settings.exec = __filename;
+
         for (let i = 0; i < cpusCount - 1; i++) {
             threadsCount++;
             let child = cluster.fork();
@@ -475,7 +501,13 @@ let preventDup = {};
                     child.$queue_cb(null, true);
                 }
                 if (msg.name === 'ERROR') {
-                    throw JSON.stringify(msg.err);
+                    hasErr = true
+                    util.spinner.fail(`编译失败:${chalk.bgRed(chalk.white(` ${path.join(child.opath.dir,child.opath.base)} `))}`);
+                    this.compileQueue.pause()
+                    killAllWorkers();
+                    setTimeout(() => {
+                        util.error(msg.err)
+                    }, 100);
                 }
 
                 if (msg.name === 'KILL_REQUEST') {
@@ -499,8 +531,17 @@ let preventDup = {};
                 --threadsCount;
                 idleThreadsArr.splice(idleThreadsArr.indexOf(child), 1);
                 if (threadsCount < 1) {
-                    console.timeEnd('build');
+                    
                     this.compileQueue = null;
+                    child.$queue_cb(null, true);
+                    if(hasErr) return;
+                    util.spinner.succeed(chalk.green(`编译完成，用时：${(Date.now()-startTime)/1000}秒`));
+                
+                    if (cmd.watch) {
+                        util.isWatch = true;
+                        this.watch(cmd);
+                    }
+                    
                 }
                 child.$queue_cb(null, true);
             });
@@ -518,16 +559,19 @@ let preventDup = {};
                 appOpath: cmd.appOpath
             });
         }
+        
 
-        return function(_data, cb) {
+        return (_data, cb) => {
             try {
                 let child = idleThreadsArr.pop();
-                
+                child.opath = _data.opath;
                 child.$queue_cb = cb;
                 child.send({
                     data: _data,
                     name: 'COMPILER_REQUEST'
                 });
+                let opath = _data.opath
+                util.spinner.text = `Compile: ${chalk.green(path.join(opath.dir,opath.base))}`
             } catch (err) {
                 console.error(err);
             }
@@ -668,9 +712,7 @@ if (cluster.isWorker) {
         'COMPILER_REQUEST'({ data }){
             try {
                 compiler._compile(data.opath, _config);
-                process.send({ name: 'COMPILED' });
             } catch (err) {
-                console.error(err);
                 process.send({ name: 'ERROR', err });
             }
         },
@@ -694,6 +736,7 @@ if (cluster.isWorker) {
     });
 
     util.compileEmitter.on('allCompileEnd', () => {
+        process.send({ name: 'COMPILED' });
         clearTimeout(killTimeer)
         killTimeer = setTimeout(() => {
             process.send({ name: 'KILL_REQUEST' });
@@ -703,4 +746,12 @@ if (cluster.isWorker) {
     // util.compileEmitter.on('startCompile', () => {
     //     clearTimeout(killTimeer);
     // });
+}
+
+
+function killAllWorkers(){
+    Object.keys(cluster.workers).forEach(pid=>{
+        let worker = cluster.workers[pid];
+        worker.send({name:'KILL'})
+    })
 }

@@ -37,6 +37,7 @@ export default {
 
         let deps = [];
         code = code.replace(/(^|[^\.\w])require\(['"]([\w\d_\-\.\/@]+)['"]\)/ig, (match, char, lib) => {
+            
             let npmInfo = opath.npm;
 
             if (lib === './_wepylogs.js') {
@@ -52,6 +53,7 @@ export default {
                 lib = 'wepy-baidu';
             }
             lib = resolve.resolveAlias(lib, opath);
+            
             if (lib === 'false') {
                 return `${char}{}`;
             } else if (path.isAbsolute(lib)) {
@@ -88,7 +90,6 @@ export default {
                     let resolvedLib = resolve.resolveSelfFields(npmInfo.dir, npmInfo.pkg, lib);
                     lib = resolvedLib ? resolvedLib : lib;
                 }
-
                 let mainFile = resolve.getMainFile(lib);
 
                 if (!mainFile) {
@@ -114,22 +115,26 @@ export default {
                 ext = '';
                 needCopy = true;
             } else { // require('babel-runtime/regenerator')
+                let isPrivateModule = lib[0] === '@'
                 let requireInfo = lib.split('/');
-                let mainFile = resolve.getMainFile(requireInfo[0]);
+                let _lib = isPrivateModule
+                ? requireInfo.slice(0, 2).join('/')
+                : requireInfo[0]
 
+                let mainFile = resolve.getMainFile(_lib);
                 if (!mainFile) {
                     throw Error('找不到模块: ' + lib + '\n被依赖于: ' + path.join(opath.dir, opath.base) + '。\n请尝试手动执行 npm install ' + lib + ' 进行安装。');
                 }
                 npmInfo = {
-                    lib: requireInfo[0],
+                    lib: _lib,
                     dir: mainFile.dir,
                     modulePath: mainFile.modulePath,
                     file: mainFile.file,
                     pkg: mainFile.pkg
                 };
                 requireInfo.shift();
-
-                let resolvedFile = requireInfo.join('/');
+                
+                let resolvedFile = requireInfo.slice(isPrivateModule?1:0).join('/')
                 if (mainFile.pkg && mainFile.pkg._activeFields.length) {
                     resolvedFile = resolve.resolveSelfFields(mainFile.dir, mainFile.pkg, resolvedFile) || resolvedFile;
                     if (path.extname(resolvedFile) === '.wpy') {
@@ -141,7 +146,6 @@ export default {
                 target = path.join(npmPath, npmInfo.lib, resolvedFile);
                 ext = '';
                 needCopy = true;
-
                 // It's a node_module component.
                 if (path.extname(mainFile.file) === '.wpy') {
                     source += '.wpy';
@@ -234,6 +238,8 @@ export default {
     },
 
     compile (lang, code, type, opath, opts = {}) {
+        let _timeLogs = util.getTimerLog();
+
         util.startCompile();
         let config = util.getConfig();
         src = cache.getSrc();
@@ -250,7 +256,7 @@ export default {
         let compiler = loader.loadCompiler(lang);
 
         if (!compiler) {
-            return;
+            throw '找不到编译器：wepy-compiler-'+lang
         }
 
         // replace wx to swan
@@ -298,8 +304,20 @@ export default {
                 .digest('hex')
         });
 
+        _timeLogs.push(`预处理`);
+
         function enqueue() {
-            compiler(code, config.compilers[lang] || {}).then(compileResult => {
+            
+            let compilerConfig = config.compilers[lang];
+            if (lang === 'babel') {
+                compilerConfig = Object.assign({}, compilerConfig, {
+                    filename: path.join(opath.dir, opath.base)
+                });
+            }
+
+            compiler(code, compilerConfig).then(compileResult => {
+                _timeLogs.push(`Babel处理`);
+
                 let sourceMap;
                 if (typeof(compileResult) === 'string') {
                     code = compileResult;
@@ -350,7 +368,8 @@ export default {
                     var Base64 = require('js-base64').Base64;
                     code += `\r\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${Base64.encode(JSON.stringify(sourceMap))}`;
                 }
-    
+                
+                _timeLogs.push(`Babel后处理`);
                 let plg = new loader.PluginHelper(config.plugins, {
                     type: type,
                     code: code,
@@ -361,6 +380,7 @@ export default {
                     done (result) {
                         // util.output('写入', `${_cacheKey}:${result.file}`);
                         // util.writeFile(target, result.code);
+                        _timeLogs.push(`插件处理`);
                         result.target = target;
                         result.deps = deps;
                         if (cacheDir && opts.cache) {
@@ -381,12 +401,14 @@ export default {
                 // 缓存文件修改时间戳
                 cache.saveBuildCache();
             }).catch((e) => {
+                console.error(e);
                 util.error(e);
                 util.endCompile();
             });
         }
 
         function wirte({ target, code, file }, isCache = false){
+            _timeLogs.gt(1000).print(`编译耗时过大：${file}`);
             util.output((isCache?'缓存':'')+'写入', file);
             util.writeFile(target, code);
             util.endCompile();

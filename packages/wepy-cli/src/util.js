@@ -18,8 +18,14 @@ import hash from 'hash-sum';
 import cache from './cache';
 import resolve from './resolve';
 import EventEmitter from 'events';
+import cluster from 'cluster';
+
+import serialize from 'serialize-javascript';
+
+import ora from 'ora';
 
 colors.enabled = true;
+
 
 colors.setTheme({
     /*SILLY: 'rainbow',
@@ -54,11 +60,61 @@ let ID_CACHE = {};
 let _countCompileAction = 0;
 class CompileEmitter extends EventEmitter{};
 let compileEmitter = new CompileEmitter();
+let spinner = new ora('Loading');
+Object.defineProperty(spinner, 'isSpinning', {
+    get() {
+        return spinner.id !== undefined;
+    }
+});
+
+const DEBUG_MODE = !1;
+
+class TimerLoger {
+    constructor(){
+        this._arr = [];
+        this._preTime = Date.now();
+
+        this.printCanabel = true;
+
+        this.firstLogTime = 0
+    }
+    push(log) {
+        if (!DEBUG_MODE) return;
+        let now = Date.now();
+        this._arr.push(`[${now - this._preTime}ms] ${log}`);
+        this._preTime = now;
+        if (!this.firstLogTime) {
+            this.firstLogTime = now;
+        }
+    }
+    print(msg) {
+        if (!DEBUG_MODE || !this.printCanabel) return;
+        msg && this.push(msg)
+        console.log('\r\n'+this._arr.join('\r\n'));
+    }
+    lt(time){
+        let now = Date.now();
+        if(now - this.firstLogTime > time){
+            this.printCanabel = false;
+        }
+        return this;
+    }
+    gt(time){
+        let now = Date.now();
+        if(now - this.firstLogTime < time){
+            this.printCanabel = false;
+        }
+        return this;
+    }
+}
 
 
 const utils = {
+    spinner,
     compileEmitter,
-    startCompile(){
+    getTimerLog:()=>(new TimerLoger()),
+    isBabel7: false,
+    startCompile() {
         _countCompileAction++;
         // console.log(`startCompile#_countCompileAction:${_countCompileAction},process:${process.pid}`);
         compileEmitter.emit('startCompile');
@@ -536,6 +592,8 @@ const utils = {
             config = require(configFile);
         }
 
+        this.isBabel7 = !!config.useBabel7
+
         cache.setConfig(config);
         return config;
     },
@@ -606,10 +664,20 @@ const utils = {
         });
     },
     error (msg) {
-        this.writeLog(msg, 'error');
-        this.log(msg, 'error', false);
-        if (!this.isWatch) {
-            process.exit(0);
+        if (!cluster.isWorker) {
+            let spinnerText = this.spinner.text;
+            let isSpinning = spinner.isSpinning
+            this.spinner.stop();
+            this.writeLog(msg, 'error');
+            this.log(msg, 'error', false);
+            
+            if (!this.isWatch) {
+                process.exit(0);
+            } else {
+                isSpinning && this.spinner.start(spinnerText)
+            }
+        } else {
+            process.send({ name: 'ERROR', err: serialize(msg) });
         }
     },
     warning (msg) {
@@ -626,12 +694,15 @@ const utils = {
             if(type === 'ERROR'){
                 if (msg instanceof Error) {
                     console.error(colors.red('[Error] ' + msg.stack));
+                }else if(typeof msg === 'object'){
+                    console.error(colors.red('[Error] %o'), msg);
                 } else {
                     console.error(colors.red('[Error] ' + msg));
                 }
             } else if(type === 'WARNING'){
                 console.error(colors.yellow('[WARNING] ' + msg));
-            } else {
+            }else {
+                if(['变更','压缩','拷贝','编译','写入','缓存写入'].includes(type)) return
                 let fn = colors[type] ? colors[type] : colors['info'];
                 console.log(dateTime + fn(`[${type}]`) + ' ' + msg);
             }

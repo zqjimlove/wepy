@@ -13,8 +13,5 @@
 
 ### 安装
 ```bash
-npm install wepy-cli@next -g
+npm install wepy-cli-next -g
 ```
-
-### Changelog
-[查看CHANGELOG](https://github.com/wepyjs/wepy/blob/master/CHANGELOG.md)

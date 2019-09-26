@@ -54,6 +54,10 @@ export default {
             };
         }
 
+        if (lang === 'babel' && util.isBabel7) {
+            lang = 'babel7';
+        }
+
         let name = 'wepy-compiler-' + lang;
         let compiler = this.load(name);
 
