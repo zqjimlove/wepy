@@ -29,6 +29,8 @@ import cluster from 'cluster';
 import rimraf from 'rimraf';
 import chalk from 'chalk';
 
+import compileWorker from './compile-worker'
+
 const Queue = require('better-queue');
 const os = require('os')
 
@@ -488,6 +490,7 @@ let startTime = 0;
         let threadsCount = 0;
         let src = cache.getSrc();
         let hasErr = false;
+        let cacheVersion = 0;
         cluster.settings.exec = __filename;
 
         for (let i = 0; i < cpusCount - 1; i++) {
@@ -497,6 +500,11 @@ let startTime = 0;
 
             child.on('message', msg => {
                 if (msg.name === 'COMPILED') {
+                    let appendCache = msg.buildCache;
+                    if(Object.keys(appendCache).length){
+                        cacheVersion = cache.appendBuildCache(appendCache)
+                        cache.saveBuildCache()
+                    }
                     idleThreadsArr.push(child);
                     child.$queue_cb(null, true);
                 }
@@ -568,6 +576,7 @@ let startTime = 0;
                 child.$queue_cb = cb;
                 child.send({
                     data: _data,
+                    cacheVersion,
                     name: 'COMPILER_REQUEST'
                 });
                 let opath = _data.opath
@@ -693,65 +702,13 @@ let startTime = 0;
 
 export default compiler;
 
-if (cluster.isWorker) {
-    let isInitChildProcess = false;
-    let _config;
-    let QUEUE_DRAIN = false;
-    let killTimeer;
-
-    const MessageHandler = {
-        'INIT_REQUEST'({  config, pages, appOpath }){
-            _config = config;
-            if (!isInitChildProcess) {
-                isInitChildProcess = true;
-                compiler.workerInit(config);
-                cache.setPages(pages);
-                cache.setAppOpath(appOpath);
-            }
-        },
-        'COMPILER_REQUEST'({ data }){
-            try {
-                compiler._compile(data.opath, _config);
-            } catch (err) {
-                process.send({ name: 'ERROR', err });
-            }
-        },
-        
-        'END'(){
-            killTimeer = setTimeout(() => {
-                process.exit(0);
-            }, 20000);
-        },
-        'KILL'(){
-            process.exit(0)
-        }
-        
-    }
-    
-    process.on('message', (msg) => {
-        // console.log(`${name},msg:${JSON.stringify(appOpath)}`);
-        // data && console.log(`message#${name}#${JSON.stringify(data.opath||{})}#`+process.pid);
-        clearTimeout(killTimeer)
-        MessageHandler[msg.name](msg);
+function killAllWorkers() {
+    Object.keys(cluster.workers).forEach(pid => {
+        let worker = cluster.workers[pid];
+        worker.send({ name: 'KILL' });
     });
-
-    util.compileEmitter.on('allCompileEnd', () => {
-        process.send({ name: 'COMPILED' });
-        clearTimeout(killTimeer)
-        killTimeer = setTimeout(() => {
-            process.send({ name: 'KILL_REQUEST' });
-        }, 1000);
-    });
-
-    // util.compileEmitter.on('startCompile', () => {
-    //     clearTimeout(killTimeer);
-    // });
 }
 
-
-function killAllWorkers(){
-    Object.keys(cluster.workers).forEach(pid=>{
-        let worker = cluster.workers[pid];
-        worker.send({name:'KILL'})
-    })
+if (cluster.isWorker) {
+    compileWorker(compiler)
 }

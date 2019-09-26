@@ -12,6 +12,7 @@ import findCacheDir from 'find-cache-dir';
 import os from 'os';
 import serialize from 'serialize-javascript';
 import crypto from 'crypto';
+import cluster from 'cluster';
 
 const cachePath = '.wepycache';
 let _buildCache = null;
@@ -19,6 +20,9 @@ let _cacheChanged = false;
 let _filelistCache = {};
 let _cssDeps = {};
 let _cache = {};
+let _appedBuildCache = {}
+
+let cacheVersion = 0;
 
 export default {
     setAppOpath(opath) {
@@ -89,16 +93,37 @@ export default {
     },
     setBuildCache(file) {
         let cache = this.getBuildCache();
-        cache[file] = util.getModifiedTime(file);
+        _appedBuildCache[file] = cache[file] = util.getModifiedTime(file);
         _buildCache = cache;
         _cacheChanged = true;
+        return ++cacheVersion;
+    },
+    appendBuildCache(_cache){
+        let cache = {
+            ...this.getBuildCache(),
+            ..._cache
+        };
+        _buildCache = cache;
+        _cacheChanged = true;
+        return ++cacheVersion;
+    },
+    getAppendBuildCache(){
+        return _appedBuildCache;
+    },
+    clearAppendBuildCache(){
+        _appedBuildCache = {}
+    },
+    clearBuildCacheInMemory(){
+        _buildCache = null;
     },
     clearBuildCache() {
         util.unlink(cachePath);
     },
     saveBuildCache() {
         if (_cacheChanged) {
-            util.writeFile(cachePath, JSON.stringify(_buildCache));
+            if(cluster.isMaster){
+                util.writeFile(cachePath, JSON.stringify(_buildCache));
+            }
             _cacheChanged = false;
         }
     },
